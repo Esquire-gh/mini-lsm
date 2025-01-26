@@ -1,12 +1,14 @@
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
-use std::ops::Bound;
+use std::mem;
+use std::ops::{Bound, RangeBounds};
 use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Ok, Result};
 use bytes::Bytes;
+use crossbeam_skiplist::base::Range;
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
@@ -38,7 +40,12 @@ pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
 impl MemTable {
     /// Create a new mem-table.
     pub fn create(_id: usize) -> Self {
-        unimplemented!()
+        Self {
+            id: _id,
+            wal: None,
+            map: Arc::new(SkipMap::new()),
+            approximate_size: Arc::new(AtomicUsize::new(0)),
+        }
     }
 
     /// Create a new mem-table with WAL
@@ -69,7 +76,14 @@ impl MemTable {
 
     /// Get a value by key.
     pub fn get(&self, _key: &[u8]) -> Option<Bytes> {
-        unimplemented!()
+        let entry = self.map.get(_key);
+
+        match entry {
+            Some(val) => {
+                return Some(val.value().clone());
+            }
+            None => None,
+        }
     }
 
     /// Put a key-value pair into the mem-table.
@@ -78,7 +92,15 @@ impl MemTable {
     /// In week 2, day 6, also flush the data to WAL.
     /// In week 3, day 5, modify the function to use the batch API.
     pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
-        unimplemented!()
+        let key = Bytes::from(_key.to_vec());
+        let value = Bytes::from(_value.to_vec());
+        self.approximate_size.store(
+            key.len() + value.len() + self.approximate_size(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+
+        self.map.insert(key, value);
+        Ok(())
     }
 
     /// Implement this in week 3, day 5.
@@ -94,8 +116,26 @@ impl MemTable {
     }
 
     /// Get an iterator over a range of keys.
-    pub fn scan(&self, _lower: Bound<&[u8]>, _upper: Bound<&[u8]>) -> MemTableIterator {
-        unimplemented!()
+    pub fn scan(&self, lower: Bound<&[u8]>, upper: Bound<&[u8]>) -> MemTableIterator {
+        let lower_bound = map_bound(lower);
+        let upper_bound = map_bound(upper);
+
+        let map = Arc::clone(&self.map);
+
+        let mut memtableiter: MemTableIterator = MemTableIteratorBuilder {
+            map,
+            iter_builder: move |map| map.range((lower_bound, upper_bound)),
+            item: (Bytes::new(), Bytes::new()),
+        }
+        .build();
+
+        let (key, value) = if let Some(entry) = memtableiter.with_iter_mut(|iter| iter.next()) {
+            (entry.key().clone(), entry.value().clone())
+        } else {
+            (Bytes::new(), Bytes::new())
+        };
+        memtableiter.with_item_mut(|item| *item = (key, value));
+        memtableiter
     }
 
     /// Flush the mem-table to SSTable. Implement in week 1 day 6.
@@ -141,18 +181,24 @@ impl StorageIterator for MemTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        &self.borrow_item().1
     }
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        KeySlice::from_slice(&self.borrow_item().0)
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        !self.borrow_item().0.is_empty()
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let (key, value) = if let Some(entry) = self.with_iter_mut(|iter| iter.next()) {
+            (entry.key().clone(), entry.value().clone())
+        } else {
+            (Bytes::new(), Bytes::new())
+        };
+        self.with_item_mut(|item| *item = (key, value));
+        Ok(())
     }
 }
