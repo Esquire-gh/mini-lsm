@@ -2,7 +2,11 @@
 #![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
 
 use std::cmp::{self};
+use std::collections::binary_heap::PeekMut;
 use std::collections::BinaryHeap;
+use std::env::current_exe;
+use std::thread::current;
+use std::usize;
 
 use anyhow::Result;
 
@@ -45,7 +49,18 @@ pub struct MergeIterator<I: StorageIterator> {
 
 impl<I: StorageIterator> MergeIterator<I> {
     pub fn create(iters: Vec<Box<I>>) -> Self {
-        unimplemented!()
+        let mut heap: BinaryHeap<HeapWrapper<I>> = BinaryHeap::new();
+        for (idx, iter) in iters.into_iter().enumerate() {
+            if iter.is_valid() {
+                heap.push(HeapWrapper(idx, iter));
+            }
+        }
+
+        let current = heap.pop();
+        Self {
+            iters: heap,
+            current: current,
+        }
     }
 }
 
@@ -55,18 +70,63 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
     type KeyType<'a> = KeySlice<'a>;
 
     fn key(&self) -> KeySlice {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.key()
     }
 
     fn value(&self) -> &[u8] {
-        unimplemented!()
+        self.current.as_ref().unwrap().1.value()
     }
 
     fn is_valid(&self) -> bool {
-        unimplemented!()
+        self.current.as_ref().is_some_and(|iter| iter.1.is_valid())
     }
 
     fn next(&mut self) -> Result<()> {
-        unimplemented!()
+        let current_iter = self.current.as_mut().unwrap();
+
+        // go through the heap starting from the top. Call next on the item if it's current key is the same as
+        // the key of current_iter. then check if it's valid. If it's not valid remove it from the heap
+        while let Some(mut heap_top) = self.iters.peek_mut() {
+            if heap_top.1.key() == current_iter.1.key() {
+                if let Err(e) = heap_top.1.next() {
+                    PeekMut::pop(heap_top);
+                    return Err(e);
+                }
+
+                if !heap_top.1.is_valid() {
+                    PeekMut::pop(heap_top);
+                }
+            } else {
+                break;
+            }
+        }
+
+        current_iter.1.next()?;
+
+        if !current_iter.1.is_valid() {
+            if let Some(iter) = self.iters.pop() {
+                *current_iter = iter;
+            }
+            return Ok(());
+        }
+
+        /* 
+        The comparison here looks weird but it's right.
+        When the keys are different we want the samllest key to be current_iter.
+        But the cmp operation defined for HeapWrapper above reverses the ordering
+        
+        So, if a < b then a is small, but we want a to be weighted more so we reverse the ordering 
+        and then it returns Ordering::Greater.
+
+        That is why we only do the swap if current_iter > heap_top and not the other way round.
+        It means either the key for current_iter is larger or it's the same as heap_top but it's index it larger. 
+        */ 
+        if let Some(mut heap_top) = self.iters.peek_mut() {
+            if *current_iter < *heap_top {
+                std::mem::swap(current_iter, &mut *heap_top);
+            }
+        }
+
+        Ok(())
     }
 }
