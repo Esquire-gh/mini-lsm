@@ -7,12 +7,13 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use bytes::Bytes;
-use crossbeam_skiplist::base::Range;
+use crossbeam_skiplist::map::Range;
+use crossbeam_skiplist::map::Entry;
 use crossbeam_skiplist::SkipMap;
 use ouroboros::self_referencing;
 
 use crate::iterators::StorageIterator;
-use crate::key::KeySlice;
+use crate::key::{KeySlice, KeyBytes};
 use crate::table::SsTableBuilder;
 use crate::wal::Wal;
 

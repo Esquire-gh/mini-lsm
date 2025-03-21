@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Ok, Result};
 use bytes::Bytes;
+use nom::character::complete::tab;
 use parking_lot::{Mutex, MutexGuard, RwLock};
 
 use crate::block::Block;
@@ -15,11 +16,13 @@ use crate::compact::{
     CompactionController, CompactionOptions, LeveledCompactionController, LeveledCompactionOptions,
     SimpleLeveledCompactionController, SimpleLeveledCompactionOptions, TieredCompactionController,
 };
-use crate::lsm_iterator::{FusedIterator, LsmIterator};
+use crate::iterators::merge_iterator::{self, MergeIterator};
+use crate::lsm_iterator::{self, FusedIterator, LsmIterator};
 use crate::manifest::Manifest;
-use crate::mem_table::MemTable;
+use crate::mem_table::{MemTable, MemTableIterator};
 use crate::mvcc::LsmMvccInner;
 use crate::table::SsTable;
+use crate::iterators::StorageIterator;
 
 pub type BlockCache = moka::sync::Cache<(usize, usize), Arc<Block>>;
 
@@ -395,6 +398,27 @@ impl LsmStorageInner {
         _lower: Bound<&[u8]>,
         _upper: Bound<&[u8]>,
     ) -> Result<FusedIterator<LsmIterator>> {
-        unimplemented!()
+        let state = self.state.read().as_ref().clone();
+        let mut memtable_iters: Vec<Box<MemTableIterator>> = vec![];
+
+        memtable_iters.push(Box::new(state.memtable.scan(_lower, _upper)));
+
+        for im_memtable in state.imm_memtables {
+            memtable_iters.push(Box::new(im_memtable.scan(_lower, _upper)));
+        }
+
+        let merge_iterator = MergeIterator::create(memtable_iters);
+        Ok(FusedIterator::new(LsmIterator::new(merge_iterator).unwrap()))
     }
 }
+
+
+
+        // while merge_iterator.is_valid() {
+        //     println!(">>>>>Key: {:?}, Value: {:?}", std::str::from_utf8(merge_iterator.key().raw_ref()), std::str::from_utf8(merge_iterator.value()));
+        //     merge_iterator.next();
+        // }
+        // println!("------------------------------");
+
+
+

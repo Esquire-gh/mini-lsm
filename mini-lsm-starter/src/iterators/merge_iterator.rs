@@ -110,17 +110,17 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
             return Ok(());
         }
 
-        /* 
+        /*
         The comparison here looks weird but it's right.
         When the keys are different we want the samllest key to be current_iter.
         But the cmp operation defined for HeapWrapper above reverses the ordering
-        
-        So, if a < b then a is small, but we want a to be weighted more so we reverse the ordering 
+
+        So, if a < b then a is small, but we want a to be weighted more so we reverse the ordering
         and then it returns Ordering::Greater.
 
         That is why we only do the swap if current_iter > heap_top and not the other way round.
-        It means either the key for current_iter is larger or it's the same as heap_top but it's index it larger. 
-        */ 
+        It means either the key for current_iter is larger or it's the same as heap_top but it's index it larger.
+        */
         if let Some(mut heap_top) = self.iters.peek_mut() {
             if *current_iter < *heap_top {
                 std::mem::swap(current_iter, &mut *heap_top);
